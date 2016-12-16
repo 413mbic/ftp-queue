@@ -4,6 +4,8 @@ import ast
 import sys
 import shutil
 import urllib
+import urlparse
+from ftplib import FTP, FTP_TLS
 
 tobechecked = sys.argv[1]
 totalsize = 0
@@ -15,22 +17,48 @@ if not os.path.exists('archive'):
     os.makedirs('archive')
 
 def fixurl(itemurl):
-    if re.search(r'^ftp:\/\/[^\/]+:21\/', itemurl):
-        itemurl = itemurl.replace(':21', '', 1)
-    return itemurl
+    #remove port number from url if it is equal to 21
+    up = urlparse.urlparse(itemurl)
+    if ":" in up.netloc:
+        domain, port = up.netloc.split(":")
+        if int(port) == 21:
+            host = domain
+        else:
+            host = up.netloc
+    else:
+        host = up.netloc
+
+    url_tuple = (up.scheme,host,up.path,up.params,up.params)
+
+    return urlparse.urlunsplit(url_tuple)
 
 with open(tobechecked, 'r') as file:
     ftps = file.read().splitlines()
     for ftp in ftps:
-        ftp = re.search(r'^(?:ftp:\/\/)?(.+)\/?$', ftp).group(1)
-        os.makedirs(re.search(r'^([^\/]+)', ftp).group(1))
-        os.chdir(re.search(r'^([^\/]+)', ftp).group(1))
+        ftp_up = urlparse.urlparse(ftp)
+
+        ftp = ftp.strip()
+        if ftp.lower().startswith("ftp://"):
+            ftp = ftp[6::]
+        if ftp.lower().startswith("ftps://"):
+            ftp = ftp[7::]
+
+        if ftp_up.scheme.lower() == "ftps":
+            ftp_conn = FTP_TLS(ftp_up.netloc)
+        else:
+            ftp_conn = FTP(ftp_up.netloc)
+
+        status = ftp_conn.login()
+        if '230' not in status:
+            print("ERROR: Failed to connect to FTP server. Status:{}".format(status))
+            continue
+
         itemftps = []
         itemslist = []
         itemsizes = []
         startdir = '/'
-        if re.search(r'^[^\/]+\/.+', ftp):
-            startdir = re.search(r'^[^\/]+(\/.+)', ftp).group(1)
+        if ftp_up.netloc:
+            startdir = ftp_up.netloc
             if not startdir.endswith('/'):
                 startdir += '/'
         dirslist = [startdir]
@@ -41,44 +69,79 @@ with open(tobechecked, 'r') as file:
                 if re.search(r'&#[0-9]+;', dir):
                     raise Exception(dir)
                 dir = dir.replace('#', '%23')
-                if not 'ftp://' + re.search(r'^([^\/]+)', ftp).group(1) + dir in itemslist:
-                    itemslist.append('ftp://' + re.search(r'^([^\/]+)', ftp).group(1) + dir)
-                    itemftps.append(re.search(r'^([^\/]+)', ftp).group(1))
-                    itemsizes.append(0)
-                if not 'ftp://' + re.search(r'^([^\/]+)', ftp).group(1) + dir + './' in itemslist:
-                    itemslist.append('ftp://' + re.search(r'^([^\/]+)', ftp).group(1) + dir + './')
-                    itemftps.append(re.search(r'^([^\/]+)', ftp).group(1))
-                    itemsizes.append(0)
-                if not 'ftp://' + re.search(r'^([^\/]+)', ftp).group(1) + dir + '../' in itemslist:
-                    itemslist.append('ftp://' + re.search(r'^([^\/]+)', ftp).group(1) + dir + '../')
-                    itemftps.append(re.search(r'^([^\/]+)', ftp).group(1))
-                    itemsizes.append(0)
+
+                for dir_derivative in (dir, "{}./".format(dir), "{}../".format(dir)):
+
+                    ftp_dir = urlparse.urlunsplit((ftp_up.scheme,
+                                                   ftp_up.netloc,
+                                                   dir_derivative,
+                                                   '',
+                                                   ''))
+
+                    if not ftp_dir + dir in itemslist:
+                        itemslist.append(ftp_dir)
+                        itemftps.append(ftp_up.netloc)
+                        itemsizes.append(0)
+
                 for match in re.findall(r'([^\/]+)', dir):
                     if '/' + match + '/' + match + '/' + match + '/' + match + '/' + match in dir:
                         break
                 else:
                     if not dir in donedirs:
-                        os.system('wget --no-glob --timeout=20 --output-document=' + re.search(r'^([^\/]+)', ftp).group(1) + '.html "ftp://' + re.search(r'^([^\/]+)', ftp).group(1) + dir + '"')
-                        if os.path.isfile(re.search(r'^([^\/]+)', ftp).group(1) + '.html'):
-                            with open(re.search(r'^([^\/]+)', ftp).group(1) + '.html', 'r') as index:
-                                for line in index.read().splitlines():
-                                    if re.search(r'<a\s+href="ftp:\/\/[^\/]+[^"]+">', line):
-                                        itemslist.append(re.search(r'<a\s+href="(ftp:\/\/[^\/]+[^"]+)">', line).group(1))
-                                        itemftps.append(re.search(r'^([^\/]+)', ftp).group(1))
-                                    if re.search(r'<\/a>.*\(', line):
-                                        itemsizes.append(int(re.search(r'<\/a>.*\(([0-9]+)', line).group(1)))
-                                    elif re.search(r'<a\s+href="ftp:\/\/[^\/]+([^"]*)">', line) and ' Directory ' in line:
-                                        dirslist.append(re.search(r'<a\s+href="ftp:\/\/[^\/]+([^"]+)">', line).group(1))
-                                        itemsizes.append(0)
-                                    elif re.search(r'<a\s+href="ftp:\/\/[^\/]+([^"]*)">', line):
-                                        itemsizes.append(0)
+
+                        rel_dir = dir.replace(ftp_up.netloc,"")
+
+                        ftp_dir = urlparse.urlunsplit((ftp_up.scheme,
+                                                       ftp_up.netloc,
+                                                       rel_dir,
+                                                       '',
+                                                       ''))
+
+                        try:
+                            ftp_conn.cwd(rel_dir)
+                        except:
+                            print("Couldn't get into: {}".format(rel_dir))
+
+                        def ftp_list_callback(line):
+                            global dirslist
+                            global itemsizes
+                            global itemslist
+                            global dir
+
+                            line_array = line.split()
+                            line_array_offset = len(line_array) - 9
+                            fs_obj_name = " ".join(line_array[8:])
+
+                            if line.startswith("d"):
+                                if dir.endswith("/") == False:
+                                    dir = "{}/".format(dir)
+
+                                path = urlparse.urljoin(dir, fs_obj_name)
+                                dirslist.append(path)
+                                itemsizes.append(0)
+
+                            elif line.startswith("-"):
+                                path = urlparse.urljoin(dir, fs_obj_name)
+                                if path.startswith("ftp://") == False and path.startswith("ftps://") == False:
+                                    path = "ftp://{}".format(path)
+                                print "file:{}".format(path)
+                                itemslist.append(path)
+
+                                size_index = (5+line_array_offset)*-1
+                                size = int(line_array[size_index])
+
+                                itemsizes.append(size)
+
+                                print "size:{}".format(size)
+
+                            else:
+                                return None
+
+                        ftp_conn.retrlines('LIST', ftp_list_callback)
+
                         donedirs.append(dir)
-                        if os.path.isfile(re.search(r'^([^\/]+)', ftp).group(1) + '.html'):
-                            os.remove(re.search(r'^([^\/]+)', ftp).group(1) + '.html')
-                        if os.path.isfile('wget-log'):
-                            os.remove('wget-log')
-        os.chdir('..')
-        shutil.rmtree(re.search(r'^([^\/]+)', ftp).group(1))
+        print "Done discovery, writing to disk..."
+
         totalitems = zip(itemftps, itemslist, itemsizes)
         archivelist = []
         newitems = []
