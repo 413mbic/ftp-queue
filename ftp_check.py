@@ -121,7 +121,7 @@ with open(tobechecked, 'r') as file:
 
                             fs_obj_name = " ".join(line_array[8:])
 
-                            print line_array
+
                             if line.startswith("d"):
                                 if dir.endswith("/") == False:
                                     dir = "{}/".format(dir)
