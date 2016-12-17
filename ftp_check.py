@@ -16,6 +16,14 @@ if not os.path.exists('items'):
 if not os.path.exists('archive'):
     os.makedirs('archive')
 
+def find_month_index(line_array):
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov" "Dec"]
+    month_indices = []
+    for month in months:
+        if month in line_array:
+            month_indices.append(line_array.index(month))
+    return min(month_indices)
+
 def fixurl(itemurl):
     #remove port number from url if it is equal to 21
     up = urlparse.urlparse(itemurl)
@@ -56,11 +64,12 @@ with open(tobechecked, 'r') as file:
         itemftps = []
         itemslist = []
         itemsizes = []
-        startdir = '/'
-        if ftp_up.netloc:
-            startdir = ftp_up.netloc
-            if not startdir.endswith('/'):
-                startdir += '/'
+
+
+        startdir = ftp_up.netloc
+        if not startdir.endswith('/'):
+            startdir += '/'
+
         dirslist = [startdir]
         donedirs = []
         while all(dir not in donedirs for dir in dirslist):
@@ -109,9 +118,10 @@ with open(tobechecked, 'r') as file:
                             global dir
 
                             line_array = line.split()
-                            line_array_offset = len(line_array) - 9
+
                             fs_obj_name = " ".join(line_array[8:])
 
+                            print line_array
                             if line.startswith("d"):
                                 if dir.endswith("/") == False:
                                     dir = "{}/".format(dir)
@@ -127,8 +137,10 @@ with open(tobechecked, 'r') as file:
                                 print "file:{}".format(path)
                                 itemslist.append(path)
 
-                                size_index = (5+line_array_offset)*-1
-                                size = int(line_array[size_index])
+                                # Size listing is always just before the Month
+                                # So find the month index and subtract one to get size
+                                month_index = find_month_index(line_array)
+                                size = int(line_array[month_index-1])
 
                                 itemsizes.append(size)
 
