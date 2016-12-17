@@ -5,6 +5,7 @@ import sys
 import shutil
 import urllib
 import urlparse
+import socket
 from ftplib import FTP, FTP_TLS
 
 tobechecked = sys.argv[1]
@@ -17,11 +18,12 @@ if not os.path.exists('archive'):
     os.makedirs('archive')
 
 def find_month_index(line_array):
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov" "Dec"]
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     month_indices = []
     for month in months:
         if month in line_array:
             month_indices.append(line_array.index(month))
+
     return min(month_indices)
 
 def fixurl(itemurl):
@@ -121,7 +123,6 @@ with open(tobechecked, 'r') as file:
 
                             fs_obj_name = " ".join(line_array[8:])
 
-
                             if line.startswith("d"):
                                 if dir.endswith("/") == False:
                                     dir = "{}/".format(dir)
@@ -149,7 +150,18 @@ with open(tobechecked, 'r') as file:
                             else:
                                 return None
 
-                        ftp_conn.retrlines('LIST', ftp_list_callback)
+                        # If we time-out, try reconnecting...
+                        try:
+                            ftp_conn.retrlines('LIST', ftp_list_callback)
+                        except socket.error:
+                            if ftp_up.scheme.lower() == "ftps":
+                                ftp_conn = FTP_TLS(ftp_up.netloc)
+                            else:
+                                ftp_conn = FTP(ftp_up.netloc)
+
+                            status = ftp_conn.login()
+                            if '230' not in status:
+                                raise Exception("ERROR: Failed to connect to FTP server. Crashing hard. Status:{}".format(status))
 
                         donedirs.append(dir)
         print "Done discovery, writing to disk..."
